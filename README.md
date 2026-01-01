@@ -19,14 +19,14 @@ A **single-file, mobile-friendly** webpage mapper that crawls a target URL, buil
 
 ## File
 
-- `web-graph-mapper.html` (single file)
+- `graph.html` (single file)
 
 ## Quick start
 
 1. Save the HTML file as:
 
    ```bash
-   web-graph-mapper.html
+   graph.html
 
 2. Run a local static server (recommended so browsers behave consistently):
 
@@ -35,7 +35,7 @@ python -m http.server 8080
 
 3. Open in your browser:
 
-http://localhost:8080/web-graph-mapper.html
+http://localhost:8080/graph.html
 
 
 4. In the UI:
