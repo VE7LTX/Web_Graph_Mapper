@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Web Graph Mapper – Nice Spacing Web</title>
+
+<!-- Core -->
+<script src="https://unpkg.com/cytoscape@3.29.2/dist/cytoscape.min.js"></script>
+
+<!-- Better force layout (plugin) -->
+<script src="https://unpkg.com/cytoscape-fcose@2.2.0/cytoscape-fcose.js"></script>
+
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:ui-monospace,monospace;
+  background:#0b0f14;
+  color:#d7e1ee;
+  -webkit-tap-highlight-color:transparent;
+}
+
+.topbar{
+  display:grid;
+  gap:8px;
+  padding:10px;
+  border-bottom:1px solid rgba(255,255,255,.12);
+  background:#0b0f14;
+}
+
+.row{display:flex;gap:8px;width:100%}
+
+input,select,button{
+  width:100%;
+  padding:12px;
+  background:#101826;
+  color:#d7e1ee;
+  border:1px solid rgba(255,255,255,.15);
+  border-radius:10px;
+  font:inherit;
+  font-size:14px;
+}
+
+button{cursor:pointer;touch-action:manipulation}
+button.primary{background:#1f78ff;border-color:#1f78ff}
+button.secondary{background:#101826}
+
+#cy{
+  height:calc(100vh - 360px);
+  width:100%;
+  background:
+    radial-gradient(900px 500px at 15% 10%, rgba(40,90,140,0.18), rgba(0,0,0,0)),
+    radial-gradient(900px 500px at 85% 90%, rgba(30,140,120,0.12), rgba(0,0,0,0)),
+    #081019;
+}
+
+.details{
+  padding:10px;
+  font-size:12px;
+  border-top:1px solid rgba(255,255,255,.12);
+  background:#070b11;
+  white-space:pre-wrap;
+  overflow:auto;
+  max-height:110px;
+}
+
+.logToggle{
+  display:none;
+  padding:10px;
+  text-align:center;
+  border-top:1px solid rgba(255,255,255,.12);
+  background:#090d14;
+  font-size:13px;
+}
+
+.log{
+  height:180px;
+  overflow:auto;
+  font-size:12px;
+  padding:10px;
+  border-top:1px solid rgba(255,255,255,.12);
+  background:#070b11;
+  white-space:pre-wrap;
+}
+
+.sliderWrap{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+.sliderWrap label{
+  font-size:12px;
+  opacity:.85;
+  white-space:nowrap;
+}
+input[type="range"]{
+  padding:0;
+  height:42px;
+}
+
+/* Desktop layout */
+@media (min-width: 980px){
+  .topbar{
+    grid-template-columns: 1fr 210px 260px 90px 110px 160px 220px auto;
+    align-items:center;
+  }
+  #cy{height:calc(100vh - 240px)}
+  .details{max-height:90px}
+  .log{height:120px}
+}
+
+/* Small phones: collapsible log */
+@media (max-width: 480px){
+  #cy{height:calc(100vh - 420px)}
+  .logToggle{display:block}
+  .log{display:none}
+  body.showLog .log{display:block}
+}
+</style>
+</head>
+
+<body>
+
+<div class="topbar">
+  <input id="url" placeholder="https://example.com" value="https://example.com">
+
+  <select id="mode" title="Fetch mode">
+    <option value="jina">Jina Reader (no-backend)</option>
+    <option value="proxy_param">Your Proxy: /fetch?url=</option>
+    <option value="proxy_path">Your Proxy: /fetch/ENCODED_URL</option>
+    <option value="direct">Direct (CORS often blocked)</option>
+  </select>
+
+  <input id="proxy" placeholder="Proxy base" value="https://r.jina.ai/">
+
+  <input id="depth" type="number" value="2" min="0" max="6" title="Max depth">
+  <input id="maxPages" type="number" value="25" min="1" max="200" title="Max pages">
+
+  <select id="layoutMode" title="Layout engine">
+    <option value="fcose">fCoSE (best spacing)</option>
+    <option value="cose">COSE (fallback)</option>
+    <option value="concentric">Concentric (depth rings)</option>
+  </select>
+
+  <div class="sliderWrap" title="Spacing (edge length)">
+    <label>Spacing</label>
+    <input id="spacing" type="range" min="60" max="260" value="140">
+  </div>
+
+  <div class="row">
+    <button id="run" class="primary">Map</button>
+    <button id="reflow" class="secondary">Reflow</button>
+    <button id="clear" class="secondary">Clear</button>
+  </div>
+</div>
+
+<div id="cy"></div>
+
+<div class="details" id="details">Tap a node to see details.</div>
+
+<div class="logToggle" id="logToggle">Toggle Log</div>
+<div class="log" id="log"></div>
+
+<script>
+(() => {
+  // Register plugin if present
+  if (window.cytoscape && window.cytoscapeFcose) {
+    cytoscape.use(window.cytoscapeFcose);
+  }
+
+  const logEl = document.getElementById("log");
+  const detailsEl = document.getElementById("details");
+
+  function log(m){
+    logEl.textContent += m + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  document.getElementById("logToggle").addEventListener("click", () => {
+    document.body.classList.toggle("showLog");
+  });
+
+  const cy = cytoscape({
+    container: document.getElementById("cy"),
+    elements: [],
+    wheelSensitivity: 0.2,
+    style: [
+      // Nodes
+      { selector:"node", style:{
+          // Keep labels off by default to reduce clutter; show on selection
+          "label": "",
+          "font-size": 11,
+          "text-wrap":"wrap",
+          "text-max-width":"110px",
+          color:"#d7e1ee",
+          "text-outline-width":2,
+          "text-outline-color":"#081019",
+          "background-color":"#2a5fa8",
+          width:32, height:32,
+          "border-width": 1,
+          "border-color":"rgba(255,255,255,.16)"
+      }},
+      { selector: "node:selected", style:{
+          "label":"data(label)",
+          "border-width": 3,
+          "border-color":"rgba(255,255,255,.65)"
+      }},
+      { selector:'node[type="page"]', style:{
+          "background-color":"#1f78ff",
+          width:46, height:46
+      }},
+      { selector:'node[type="external"]', style:{
+          "background-color":"#ffcf66",
+          width:30, height:30
+      }},
+      { selector:'node[type="terminal"]', style:{
+          "background-color":"#6bffb6",
+          width:54, height:54,
+          "border-width": 3,
+          "border-color":"rgba(107,255,182,.45)"
+      }},
+
+      // Edges
+      { selector:"edge", style:{
+          width: 1,
+          "line-color":"rgba(200,220,255,.18)",
+          "target-arrow-shape":"triangle",
+          "target-arrow-color":"rgba(200,220,255,.22)",
+          "curve-style":"bezier",
+          "arrow-scale": 0.8
+      }},
+      { selector:"edge:selected", style:{
+          "line-color":"rgba(255,255,255,.45)",
+          "target-arrow-color":"rgba(255,255,255,.55)",
+          "width": 2
+      }}
+    ],
+    layout: { name:"grid" }
+  });
+
+  cy.on("tap", "node", (evt) => {
+    const d = evt.target.data();
+    const lines = [];
+    lines.push(`type: ${d.type || ""}`);
+    lines.push(`label: ${d.label || ""}`);
+    if (d.url) lines.push(`url: ${d.url}`);
+    if (d.depth !== undefined) lines.push(`depth: ${d.depth}`);
+    detailsEl.textContent = lines.join("\n");
+  });
+
+  // Optional: show labels when zoomed-in enough
+  function updateLabelVisibility(){
+    const z = cy.zoom();
+    const show = z >= 1.1;
+    cy.nodes().forEach(n => {
+      if (n.selected()) return; // selected always shows
+      n.style("label", show ? n.data("label") : "");
+    });
+  }
+  cy.on("zoom", updateLabelVisibility);
+
+  function clearAll(){
+    cy.elements().remove();
+    logEl.textContent = "";
+    detailsEl.textContent = "Tap a node to see details.";
+  }
+  document.getElementById("clear").addEventListener("click", clearAll);
+
+  function nid(prefix, u){
+    return prefix + btoa(unescape(encodeURIComponent(u))).replace(/=+$/,"");
+  }
+
+  function safeURL(u){
+    try { return new URL(u).toString(); } catch { return ""; }
+  }
+
+  function isLikelyHTML(text){
+    const s = text.slice(0, 2000).toLowerCase();
+    return s.includes("<html") || s.includes("<a ") || s.includes("<body") || s.includes("<!doctype");
+  }
+
+  function extractLinksFromHTML(html, baseUrl){
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const out = new Set();
+    for (const a of doc.querySelectorAll("a[href]")){
+      const href = a.getAttribute("href");
+      if (!href) continue;
+      const h = href.trim().toLowerCase();
+      if (h.startsWith("#") || h.startsWith("javascript:") || h.startsWith("mailto:") || h.startsWith("tel:")) continue;
+      try { out.add(new URL(href, baseUrl).toString()); } catch {}
+    }
+    return [...out];
+  }
+
+  function extractLinksFromText(text, baseUrl){
+    const out = new Set();
+
+    // Markdown: [label](url)
+    const md = /\[[^\]]*\]\(([^)\s]+)\)/g;
+    let m;
+    while ((m = md.exec(text)) !== null){
+      const raw = m[1];
+      if (!raw) continue;
+      const low = raw.toLowerCase();
+      if (low.startsWith("mailto:") || low.startsWith("tel:") || low.startsWith("javascript:")) continue;
+      try { out.add(new URL(raw, baseUrl).toString()); } catch {}
+    }
+
+    // Plain URLs
+    const urlRe = /\bhttps?:\/\/[^\s<>"')\]]+/g;
+    while ((m = urlRe.exec(text)) !== null){
+      const raw = m[0];
+      try { out.add(new URL(raw).toString()); } catch {}
+    }
+
+    return [...out];
+  }
+
+  async function fetchText(fetchUrl){
+    const r = await fetch(fetchUrl, { method:"GET" });
+    if(!r.ok){
+      const t = await r.text().catch(() => "");
+      throw new Error(`HTTP ${r.status}${t ? " | " + t.slice(0,120) : ""}`);
+    }
+    return await r.text();
+  }
+
+  async function fetchPage(url){
+    const mode = document.getElementById("mode").value;
+    let proxyBase = document.getElementById("proxy").value.trim();
+
+    if(mode === "jina"){
+      if(!proxyBase) proxyBase = "https://r.jina.ai/";
+      if(!proxyBase.endsWith("/")) proxyBase += "/";
+      // Jina expects: https://r.jina.ai/https://target.site/path
+      return await fetchText(proxyBase + url);
+    }
+
+    if(mode === "proxy_param"){
+      if(!proxyBase) throw new Error("proxy base missing");
+      const joiner = proxyBase.includes("?") ? "&" : "?";
+      return await fetchText(proxyBase + joiner + "url=" + encodeURIComponent(url));
+    }
+
+    if(mode === "proxy_path"){
+      if(!proxyBase) throw new Error("proxy base missing");
+      if(!proxyBase.endsWith("/")) proxyBase += "/";
+      return await fetchText(proxyBase + encodeURIComponent(url));
+    }
+
+    // direct
+    return await fetchText(url);
+  }
+
+  function prettyLabel(url){
+    try{
+      const u = new URL(url);
+      const p = (u.pathname && u.pathname !== "/") ? u.pathname : "/";
+      return p.length > 26 ? p.slice(0, 23) + "…" : p;
+    }catch{
+      return url.slice(0, 26);
+    }
+  }
+
+  function classify(url, rootOrigin){
+    try { return new URL(url).origin === rootOrigin ? "internal" : "external"; }
+    catch { return "external"; }
+  }
+
+  function runLayout(){
+    const layoutMode = document.getElementById("layoutMode").value;
+    const spacing = parseInt(document.getElementById("spacing").value, 10) || 140;
+
+    if(layoutMode === "concentric"){
+      // Nice for depth visualization
+      cy.layout({
+        name: "concentric",
+        padding: 40,
+        minNodeSpacing: 40,
+        concentric: (n) => {
+          const d = n.data("depth");
+          return (d === undefined ? 0 : -d);
+        },
+        levelWidth: () => 1
+      }).run();
+      cy.fit(undefined, 30);
+      updateLabelVisibility();
+      return;
+    }
+
+    if(layoutMode === "fcose" && cy.layout({name:"fcose"}) ){
+      // fCoSE produces a cleaner “web” with better spacing + overlap avoidance
+      cy.layout({
+        name: "fcose",
+        quality: "default",
+        randomize: true,
+        animate: true,
+        animationDuration: 700,
+        fit: true,
+        padding: 40,
+
+        // Key spacing knobs
+        idealEdgeLength: spacing,
+        nodeSeparation: spacing * 0.9,
+
+        // Prevent pile-ups
+        avoidOverlap: true,
+        avoidOverlapPadding: 12,
+
+        // Force feel
+        nodeRepulsion: 12000,
+        edgeElasticity: 0.45,
+        gravity: 0.18,
+
+        // Extra stability
+        numIter: 900
+      }).run();
+
+      updateLabelVisibility();
+      return;
+    }
+
+    // Fallback: COSE tuned
+    cy.layout({
+      name: "cose",
+      animate: true,
+      animationDuration: 650,
+      padding: 40,
+      nodeRepulsion: 9000,
+      idealEdgeLength: spacing,
+      edgeElasticity: 0.25,
+      gravity: 0.18,
+      numIter: 1000,
+      initialTemp: 1200,
+      coolingFactor: 0.99,
+      minTemp: 1.0
+    }).run();
+
+    updateLabelVisibility();
+  }
+
+  document.getElementById("reflow").addEventListener("click", () => {
+    runLayout();
+    cy.fit(undefined, 30);
+  });
+
+  document.getElementById("spacing").addEventListener("input", () => {
+    // Optional: don’t auto-run on every input on slow phones.
+    // If you want live updates, uncomment next line.
+    // runLayout();
+  });
+
+  document.getElementById("run").addEventListener("click", async () => {
+    clearAll();
+
+    const rootURL = safeURL(document.getElementById("url").value.trim());
+    if(!rootURL){
+      log("ERROR invalid URL");
+      return;
+    }
+
+    const maxDepth = Math.max(0, Math.min(6, parseInt(document.getElementById("depth").value || "2", 10)));
+    const maxPages = Math.max(1, Math.min(200, parseInt(document.getElementById("maxPages").value || "25", 10)));
+
+    const rootOrigin = new URL(rootURL).origin;
+
+    log("START " + rootURL);
+    log("layout=" + document.getElementById("layoutMode").value + " spacing=" + document.getElementById("spacing").value);
+
+    const rootId = nid("p:", rootURL);
+    cy.add({ data:{ id: rootId, label:"ROOT", type:"page", url: rootURL, depth: 0 }});
+
+    const q = [{ url: rootURL, id: rootId, depth: 0 }];
+    const seen = new Set();
+    let fetched = 0;
+
+    while(q.length && fetched < maxPages){
+      const item = q.shift();
+      const { url, id, depth } = item;
+      if(seen.has(url)) continue;
+      seen.add(url);
+
+      let text = "";
+      try{
+        text = await fetchPage(url);
+        fetched++;
+        log("FETCH " + url);
+      }catch(e){
+        log("FAIL " + url + " -> " + e.message);
+        const node = cy.getElementById(id);
+        if(node && node.length) node.data("type","terminal");
+        continue;
+      }
+
+      const links = isLikelyHTML(text)
+        ? extractLinksFromHTML(text, url)
+        : extractLinksFromText(text, url);
+
+      let internalCount = 0;
+
+      for(const link of links){
+        const kind = classify(link, rootOrigin);
+        const isInternal = (kind === "internal");
+        const lid = nid(isInternal ? "p:" : "e:", link);
+
+        if(!cy.getElementById(lid).length){
+          cy.add({ data:{
+            id: lid,
+            label: isInternal ? prettyLabel(link) : (new URL(link).hostname || "external"),
+            type: isInternal ? "page" : "external",
+            url: link,
+            depth: depth + 1
+          }});
+        }
+
+        const eid = id + "->" + lid;
+        if(!cy.getElementById(eid).length){
+          cy.add({ data:{ id: eid, source: id, target: lid }});
+        }
+
+        if(isInternal){
+          internalCount++;
+          if(depth < maxDepth && !seen.has(link)){
+            q.push({ url: link, id: lid, depth: depth + 1 });
+          }
+        }
+      }
+
+      if(internalCount === 0 || depth === maxDepth){
+        const node = cy.getElementById(id);
+        if(node && node.length) node.data("type","terminal");
+      }
+    }
+
+    runLayout();
+    cy.fit(undefined, 30);
+    updateLabelVisibility();
+    log("DONE fetched=" + fetched + " nodes=" + cy.nodes().length + " edges=" + cy.edges().length);
+  });
+
+  window.addEventListener("resize", () => {
+    cy.resize();
+    cy.fit(undefined, 30);
+    updateLabelVisibility();
+  });
+})();
+</script>
+
+</body>
+</html>
