@@ -1,5 +1,7 @@
 # Web Graph Mapper (Single-File HTML)
 
+![Web Graph Mapper Screenshot](https://github.com/VE7LTX/Web_Graph_Mapper/blob/main/Screenshot_20251231_211228_Brave.jpg)
+
 A **single-file, mobile-friendly** webpage mapper that crawls a target URL, builds a **node graph** of internal navigation + external links, and renders it as a clean, nicely spaced “web” using Cytoscape with the **fCoSE** layout.
 
 ## What it does
